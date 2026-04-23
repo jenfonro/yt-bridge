@@ -509,11 +509,7 @@ func externalBaseURL(r *http.Request) string {
 	return scheme + "://" + host
 }
 
-func externalURLPrefix(r *http.Request) string {
-	headerPrefix := normalizePathPrefix(firstHeaderToken(r.Header.Get("X-Forwarded-Prefix")))
-	if headerPrefix != "" {
-		return headerPrefix
-	}
+func externalURLPrefix(_ *http.Request) string {
 	return defaultURLPrefix
 }
 
