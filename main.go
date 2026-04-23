@@ -388,7 +388,18 @@ func (a *app) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 		urls = append(urls, label, u)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "parse": 0, "url": urls})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true,
+		"parse": 0,
+		"url": urls,
+		"version": "v1.1.4",
+		"evidence": map[string]any{
+			"watch_id": watchID,
+			"video_id": videoID,
+			"cookies_path": a.cookiesPath,
+			"cookies_exists": fileExists(a.cookiesPath),
+		},
+	})
 }
 
 func defaultRuntimeConfig() runtimeConfig {

@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"os/exec"
 	"sort"
 	"strings"
@@ -17,18 +16,10 @@ func (a *app) runYtDlpJSON(ctx context.Context, watchURL string) (*ytdlpInfo, er
 		"--js-runtimes", "node",
 		"--no-playlist", "--no-warnings", "-J",
 	}
-	if proxy := strings.TrimSpace(firstNonEmpty(
-		os.Getenv("YTDLP_PROXY"),
-		os.Getenv("HTTPS_PROXY"),
-		os.Getenv("https_proxy"),
-		os.Getenv("HTTP_PROXY"),
-		os.Getenv("http_proxy"),
-	)); proxy != "" {
-		args = append(args, "--proxy", proxy)
+	if !fileExists(a.cookiesPath) {
+		return nil, errors.New("cookies file not found")
 	}
-	if fileExists(a.cookiesPath) {
-		args = append(args, "--cookies", a.cookiesPath)
-	}
+	args = append(args, "--cookies", a.cookiesPath)
 	args = append(args, watchURL)
 
 	cmd := exec.CommandContext(ctx, a.ytdlpPath, args...)
