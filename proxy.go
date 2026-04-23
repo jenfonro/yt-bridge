@@ -20,6 +20,7 @@ func (a *app) handleProxy(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
+	prefix := externalURLPrefix(r)
 	rest := strings.TrimPrefix(r.URL.Path, "/proxy/")
 	parts := strings.SplitN(rest, "/", 3)
 	if len(parts) != 3 {
@@ -90,7 +91,7 @@ func (a *app) handleProxy(w http.ResponseWriter, r *http.Request) {
 
 		playlist := ""
 		if hasCachedHLS {
-			playlist = rewriteM3U8ToURLProxy(cachedHLS.Raw, cachedHLS.MediaURL)
+			playlist = rewriteM3U8ToURLProxy(cachedHLS.Raw, cachedHLS.MediaURL, prefix)
 		} else if isHLSURL(strings.TrimSpace(pick.URL)) {
 			mediaURL, mediaRaw, e := a.resolveMediaPlaylist(ctx, strings.TrimSpace(pick.URL), strings.TrimSpace(r.Header.Get("User-Agent")))
 			if e != nil {
@@ -106,10 +107,10 @@ func (a *app) handleProxy(w http.ResponseWriter, r *http.Request) {
 				a.playCache[videoID] = cached
 			}
 			a.playCacheMu.Unlock()
-			playlist = rewriteM3U8ToURLProxy(mediaRaw, mediaURL)
+			playlist = rewriteM3U8ToURLProxy(mediaRaw, mediaURL, prefix)
 		} else {
 			raw := "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:3600\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:3600.0,\n" + strings.TrimSpace(pick.URL) + "\n#EXT-X-ENDLIST\n"
-			playlist = rewriteM3U8ToURLProxy(raw, strings.TrimSpace(pick.URL))
+			playlist = rewriteM3U8ToURLProxy(raw, strings.TrimSpace(pick.URL), prefix)
 		}
 		writePlaylistText(w, playlist)
 		return
@@ -215,7 +216,7 @@ func (a *app) handleProxy(w http.ResponseWriter, r *http.Request) {
 	}
 	a.playCacheMu.Unlock()
 	webmTemplate := strings.EqualFold(trackPathExt(videoTrack), "webm") && strings.EqualFold(trackPathExt(audioTrack), "webm")
-	mpdText, err := buildDashPlayText(videoID, item.Label, entry.Meta.DurationSec, videoTrack, audioTrack, webmTemplate)
+	mpdText, err := buildDashPlayText(videoID, item.Label, entry.Meta.DurationSec, videoTrack, audioTrack, webmTemplate, prefix)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"ok": false, "message": err.Error()})
 		return
@@ -325,12 +326,12 @@ func youtubeThumbnailURL(videoID string) string {
 	return "https://i.ytimg.com/vi/" + id + "/hqdefault.jpg"
 }
 
-func buildImagePathByVodID(base, vodID string) string {
+func buildImagePathByVodID(base, prefix, vodID string) string {
 	videoID, err := extractYouTubeVideoIDFromWatchID(strings.TrimSpace(vodID))
 	if err != nil || strings.TrimSpace(videoID) == "" {
 		return ""
 	}
-	p := "/proxy/image/" + url.PathEscape(videoID)
+	p := withPathPrefix(prefix, "/proxy/image/"+url.PathEscape(videoID))
 	if base != "" {
 		return base + p
 	}
@@ -777,7 +778,7 @@ func qualityKeyFromPathSegment(seg string) string {
 }
 
 // ---- from m3u8_proxy.go ----
-func rewriteM3U8ToURLProxy(raw, baseURL string) string {
+func rewriteM3U8ToURLProxy(raw, baseURL, prefix string) string {
 	normalized := strings.ReplaceAll(raw, "\r\n", "\n")
 	lines := strings.Split(normalized, "\n")
 	for i := range lines {
@@ -787,19 +788,19 @@ func rewriteM3U8ToURLProxy(raw, baseURL string) string {
 			continue
 		}
 		if strings.HasPrefix(trimmed, "#") {
-			lines[i] = rewriteM3U8TagURIAttrsToURLProxy(line, baseURL)
+			lines[i] = rewriteM3U8TagURIAttrsToURLProxy(line, baseURL, prefix)
 			continue
 		}
 		abs, ok := resolveM3U8Ref(baseURL, trimmed)
 		if !ok {
 			continue
 		}
-		lines[i] = buildURLProxyPath(abs)
+		lines[i] = buildURLProxyPath(abs, prefix)
 	}
 	return strings.Join(lines, "\n")
 }
 
-func rewriteM3U8TagURIAttrsToURLProxy(line, baseURL string) string {
+func rewriteM3U8TagURIAttrsToURLProxy(line, baseURL, prefix string) string {
 	upper := strings.ToUpper(line)
 	idx := 0
 	out := line
@@ -838,7 +839,7 @@ func rewriteM3U8TagURIAttrsToURLProxy(line, baseURL string) string {
 			idx = end + 1
 			continue
 		}
-		rewritten := buildURLProxyPath(abs)
+		rewritten := buildURLProxyPath(abs, prefix)
 		if quoted {
 			out = out[:start] + rewritten + out[end:]
 			idx = start + len(rewritten) + 1
@@ -875,12 +876,12 @@ func resolveM3U8Ref(baseURL, ref string) (string, bool) {
 	return u, true
 }
 
-func buildURLProxyPath(absURL string) string {
+func buildURLProxyPath(absURL, prefix string) string {
 	u := strings.TrimSpace(absURL)
 	if u == "" {
 		return ""
 	}
-	return "/proxy/url/" + url.PathEscape(u)
+	return withPathPrefix(prefix, "/proxy/url/"+url.PathEscape(u))
 }
 
 type internalProxyReq struct {

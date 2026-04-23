@@ -387,7 +387,7 @@ func (a *app) fetchYouTubeHomeVodListFromChromeDebug(ctx context.Context, page i
 	return out[start:end], nil
 }
 
-func (a *app) fetchYouTubeDetailFromChromeDebug(ctx context.Context, vodID string, imageBase string) (map[string]string, error) {
+func (a *app) fetchYouTubeDetailFromChromeDebug(ctx context.Context, vodID string, imageBase string, imagePrefix string) (map[string]string, error) {
 	cfg, err := a.loadRuntimeConfig()
 	if err != nil {
 		return nil, err
@@ -681,7 +681,7 @@ func (a *app) fetchYouTubeDetailFromChromeDebug(ctx context.Context, vodID strin
 			}
 			taggedName := fmt.Sprintf("%s.S01E%02d", name, ep)
 			ep++
-			parts = append(parts, taggedName+"$"+buildEpisodeID(id, buildImagePathByVodID(imageBase, id), author, duration))
+			parts = append(parts, taggedName+"$"+buildEpisodeID(id, buildImagePathByVodID(imageBase, imagePrefix, id), author, duration))
 		}
 		return strings.Join(parts, "#")
 	}
@@ -725,9 +725,9 @@ func cloneVodList(in []map[string]string) []map[string]string {
 	return out
 }
 
-func applyImageProxyBase(list []map[string]string, base string) {
+func applyImageProxyBase(list []map[string]string, base, prefix string) {
 	for i := range list {
-		if p := buildImagePathByVodID(base, strings.TrimSpace(list[i]["vod_id"])); p != "" {
+		if p := buildImagePathByVodID(base, prefix, strings.TrimSpace(list[i]["vod_id"])); p != "" {
 			list[i]["vod_pic"] = p
 		}
 	}

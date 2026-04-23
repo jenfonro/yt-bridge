@@ -16,11 +16,11 @@ import (
 	"time"
 )
 
-func buildDashPlayText(videoID, qualityLabel string, durationSec float64, videoTrack mediaTrack, audioTrack mediaTrack, webmTemplate bool) (string, error) {
+func buildDashPlayText(videoID, qualityLabel string, durationSec float64, videoTrack mediaTrack, audioTrack mediaTrack, webmTemplate bool, prefix string) (string, error) {
 	videoExt := strings.ToLower(strings.TrimSpace(trackPathExt(videoTrack)))
 	audioExt := strings.ToLower(strings.TrimSpace(trackPathExt(audioTrack)))
-	videoPath := "/proxy/" + videoID + "/mpd/video/" + qualityPathSegment(qualityLabel) + "." + videoExt
-	audioPath := "/proxy/" + videoID + "/mpd/audio/main." + audioExt
+	videoPath := withPathPrefix(prefix, "/proxy/"+videoID+"/mpd/video/"+qualityPathSegment(qualityLabel)+"."+videoExt)
+	audioPath := withPathPrefix(prefix, "/proxy/"+videoID+"/mpd/audio/main."+audioExt)
 	if durationSec <= 0 {
 		durationSec = deriveDashDurationSec(videoTrack, audioTrack)
 	}

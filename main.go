@@ -19,6 +19,7 @@ const (
 	defaultAddr        = ":8080"
 	resolveTimeout     = 60 * time.Second
 	defaultChromeDebug = "http://127.0.0.1:9222"
+	defaultBasePath    = ""
 	ytdlpBinaryName    = "yt-dlp"
 	cookiesFileName    = "www.youtube.com_cookies.txt"
 	probeStepBytes     = 512 * 1024
@@ -26,6 +27,8 @@ const (
 	maxPlaylistSize    = 8 << 20
 	playCacheTTL       = 1 * time.Hour
 )
+
+var defaultURLPrefix string
 
 type app struct {
 	ytdlpPath      string
@@ -154,6 +157,7 @@ type runtimeConfig struct {
 	ServerAddr     string `json:"server_addr"`
 	ChromeDebugURL string `json:"chrome_debug_url"`
 	ProbeTimeoutMS int    `json:"probe_timeout_ms"`
+	BasePath       string `json:"base_path"`
 }
 
 func main() {
@@ -174,6 +178,7 @@ func main() {
 	if created {
 		log.Printf("[yt-bridge] config initialized: %s", cfgPath)
 	}
+	defaultURLPrefix = normalizePathPrefix(cfg.BasePath)
 
 	a := &app{
 		ytdlpPath:           ytdlpPath,
@@ -233,6 +238,7 @@ func (a *app) handleCategory(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	base := externalBaseURL(r)
+	prefix := externalURLPrefix(r)
 
 	a.categoryCacheMu.Lock()
 	cacheValid := now.Before(a.categoryCacheUntil)
@@ -240,7 +246,7 @@ func (a *app) handleCategory(w http.ResponseWriter, r *http.Request) {
 		if cached, ok := a.categoryCacheByPage[page]; ok {
 			list := cloneVodList(cached)
 			a.categoryCacheMu.Unlock()
-			applyImageProxyBase(list, base)
+			applyImageProxyBase(list, base, prefix)
 			writeJSON(w, http.StatusOK, map[string]any{"list": list})
 			return
 		}
@@ -289,7 +295,7 @@ func (a *app) handleCategory(w http.ResponseWriter, r *http.Request) {
 		a.categoryCacheMu.Unlock()
 	}
 
-	applyImageProxyBase(list, base)
+	applyImageProxyBase(list, base, prefix)
 	writeJSON(w, http.StatusOK, map[string]any{"list": list})
 }
 
@@ -314,13 +320,14 @@ func (a *app) handleDetail(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	base := externalBaseURL(r)
-	detail, err := a.fetchYouTubeDetailFromChromeDebug(ctx, vodID, base)
+	prefix := externalURLPrefix(r)
+	detail, err := a.fetchYouTubeDetailFromChromeDebug(ctx, vodID, base, prefix)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
 		return
 	}
 
-	if pic := buildImagePathByVodID(base, strings.TrimSpace(detail["vod_id"])); pic != "" {
+	if pic := buildImagePathByVodID(base, prefix, strings.TrimSpace(detail["vod_id"])); pic != "" {
 		detail["vod_pic"] = pic
 	}
 
@@ -364,6 +371,7 @@ func (a *app) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := externalBaseURL(r)
+	prefix := externalURLPrefix(r)
 	sorted := sortPlayItems(entry.Meta.Items)
 	// Keep cat API play payload compatible: [label1, url1, label2, url2, ...]
 	urls := make([]any, 0, len(sorted)*2)
@@ -372,7 +380,7 @@ func (a *app) handlePlay(w http.ResponseWriter, r *http.Request) {
 		if label == "" {
 			continue
 		}
-		p := "/proxy/" + url.PathEscape(videoID) + "/manifest/" + url.PathEscape(qualityPathSegment(label)) + "." + it.Mode
+		p := withPathPrefix(prefix, "/proxy/"+url.PathEscape(videoID)+"/manifest/"+url.PathEscape(qualityPathSegment(label))+"."+it.Mode)
 		u := p
 		if base != "" {
 			u = base + p
@@ -387,6 +395,7 @@ func defaultRuntimeConfig() runtimeConfig {
 		ServerAddr:     defaultAddr,
 		ChromeDebugURL: defaultChromeDebug,
 		ProbeTimeoutMS: 5000,
+		BasePath:       defaultBasePath,
 	}
 }
 
@@ -402,6 +411,7 @@ func mergeRuntimeConfig(raw runtimeConfig) runtimeConfig {
 	if cfg.ProbeTimeoutMS <= 0 {
 		cfg.ProbeTimeoutMS = def.ProbeTimeoutMS
 	}
+	cfg.BasePath = normalizePathPrefix(cfg.BasePath)
 	return cfg
 }
 
@@ -497,6 +507,44 @@ func externalBaseURL(r *http.Request) string {
 		}
 	}
 	return scheme + "://" + host
+}
+
+func externalURLPrefix(r *http.Request) string {
+	headerPrefix := normalizePathPrefix(firstHeaderToken(r.Header.Get("X-Forwarded-Prefix")))
+	if headerPrefix != "" {
+		return headerPrefix
+	}
+	return defaultURLPrefix
+}
+
+func normalizePathPrefix(raw string) string {
+	p := strings.TrimSpace(raw)
+	if p == "" || p == "/" {
+		return ""
+	}
+	if !strings.HasPrefix(p, "/") {
+		p = "/" + p
+	}
+	p = strings.TrimRight(p, "/")
+	if p == "" || p == "/" {
+		return ""
+	}
+	return p
+}
+
+func withPathPrefix(prefix, path string) string {
+	p := normalizePathPrefix(prefix)
+	v := strings.TrimSpace(path)
+	if v == "" {
+		return p
+	}
+	if !strings.HasPrefix(v, "/") {
+		v = "/" + v
+	}
+	if p == "" {
+		return v
+	}
+	return p + v
 }
 
 func firstHeaderToken(raw string) string {
