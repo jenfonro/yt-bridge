@@ -16,9 +16,6 @@ func (a *app) runYtDlpJSON(ctx context.Context, watchURL string) (*ytdlpInfo, er
 		"--js-runtimes", "node",
 		"--no-playlist", "--no-warnings", "-J",
 	}
-	if !fileExists(a.cookiesPath) {
-		return nil, errors.New("cookies file not found")
-	}
 	args = append(args, "--cookies", a.cookiesPath)
 	args = append(args, watchURL)
 

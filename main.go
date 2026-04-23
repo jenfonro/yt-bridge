@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,18 +22,17 @@ const (
 	defaultChromeDebug = "http://127.0.0.1:9223"
 	defaultBasePath    = ""
 	ytdlpBinaryName    = "yt-dlp"
-	cookiesFileName    = "www.youtube.com_cookies.txt"
+	cookiesDirName     = "cookies"
 	probeStepBytes     = 512 * 1024
 	probeMaxBytes      = 8 * 1024 * 1024
 	maxPlaylistSize    = 8 << 20
 	playCacheTTL       = 1 * time.Hour
 )
 
-var defaultURLPrefix string
-
 type app struct {
 	ytdlpPath      string
 	cookiesPath    string
+	basePath       string
 	upstreamClient *http.Client
 	configPath     string
 
@@ -170,6 +170,10 @@ func main() {
 	if !fileExists(ytdlpPath) {
 		log.Fatalf("yt-dlp binary not found: %s", ytdlpPath)
 	}
+	cookiesPath, err := resolveCookiesTxtPath(runtimeRoot)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	cfg, cfgPath, created, err := ensureConfigExistsAndPatched(runtimeRoot)
 	if err != nil {
@@ -178,11 +182,11 @@ func main() {
 	if created {
 		log.Printf("[yt-bridge] config initialized: %s", cfgPath)
 	}
-	defaultURLPrefix = normalizePathPrefix(cfg.BasePath)
 
 	a := &app{
 		ytdlpPath:           ytdlpPath,
-		cookiesPath:         filepath.Join(runtimeRoot, cookiesFileName),
+		cookiesPath:         cookiesPath,
+		basePath:            normalizePathPrefix(cfg.BasePath),
 		upstreamClient:      newUpstreamClient(),
 		configPath:          cfgPath,
 		categoryCacheByPage: make(map[int][]map[string]string),
@@ -194,7 +198,7 @@ func main() {
 	registerRoutes(mux, a)
 
 	addr := strings.TrimSpace(cfg.ServerAddr)
-	h := withBasePath(mux, cfg.BasePath)
+	h := withBasePath(mux, a.basePath)
 	log.Printf("[yt-bridge] start addr=%s yt-dlp=%s cookies=%s config=%s", addr, a.ytdlpPath, a.cookiesPath, a.configPath)
 	if err := http.ListenAndServe(addr, withCORS(loggingMiddleware(h))); err != nil {
 		log.Fatal(err)
@@ -239,7 +243,7 @@ func (a *app) handleCategory(w http.ResponseWriter, r *http.Request) {
 
 	now := time.Now()
 	base := externalBaseURL(r)
-	prefix := externalURLPrefix(r)
+	prefix := a.basePath
 
 	a.categoryCacheMu.Lock()
 	cacheValid := now.Before(a.categoryCacheUntil)
@@ -321,7 +325,7 @@ func (a *app) handleDetail(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	base := externalBaseURL(r)
-	prefix := externalURLPrefix(r)
+	prefix := a.basePath
 	detail, err := a.fetchYouTubeDetailFromChromeDebug(ctx, vodID, base, prefix)
 	if err != nil {
 		writeJSON(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
@@ -372,7 +376,7 @@ func (a *app) handlePlay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	base := externalBaseURL(r)
-	prefix := externalURLPrefix(r)
+	prefix := a.basePath
 	sorted := sortPlayItems(entry.Meta.Items)
 	// Keep cat API play payload compatible: [label1, url1, label2, url2, ...]
 	urls := make([]any, 0, len(sorted)*2)
@@ -388,18 +392,7 @@ func (a *app) handlePlay(w http.ResponseWriter, r *http.Request) {
 		}
 		urls = append(urls, label, u)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"ok": true,
-		"parse": 0,
-		"url": urls,
-		"version": "v1.1.4",
-		"evidence": map[string]any{
-			"watch_id": watchID,
-			"video_id": videoID,
-			"cookies_path": a.cookiesPath,
-			"cookies_exists": fileExists(a.cookiesPath),
-		},
-	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "parse": 0, "url": urls})
 }
 
 func defaultRuntimeConfig() runtimeConfig {
@@ -521,10 +514,6 @@ func externalBaseURL(r *http.Request) string {
 	return scheme + "://" + host
 }
 
-func externalURLPrefix(_ *http.Request) string {
-	return defaultURLPrefix
-}
-
 func normalizePathPrefix(raw string) string {
 	p := strings.TrimSpace(raw)
 	if p == "" || p == "/" {
@@ -589,6 +578,33 @@ func cloneURL(u *url.URL) *url.URL {
 	}
 	cp := *u
 	return &cp
+}
+
+func resolveCookiesTxtPath(runtimeRoot string) (string, error) {
+	cookiesDir := filepath.Join(runtimeRoot, cookiesDirName)
+	entries, err := os.ReadDir(cookiesDir)
+	if err != nil {
+		return "", fmt.Errorf("cookies dir not available: %s", cookiesDir)
+	}
+	candidates := make([]string, 0)
+	for _, e := range entries {
+		if e == nil || e.IsDir() {
+			continue
+		}
+		name := strings.TrimSpace(e.Name())
+		if !strings.HasSuffix(strings.ToLower(name), ".txt") {
+			continue
+		}
+		full := filepath.Join(cookiesDir, name)
+		if fileExists(full) {
+			candidates = append(candidates, full)
+		}
+	}
+	if len(candidates) == 0 {
+		return "", errors.New("cookies txt file not found in cookies/")
+	}
+	sort.Strings(candidates)
+	return candidates[0], nil
 }
 
 func firstHeaderToken(raw string) string {

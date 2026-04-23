@@ -20,7 +20,7 @@ func (a *app) handleProxy(w http.ResponseWriter, r *http.Request) {
 		methodNotAllowed(w)
 		return
 	}
-	prefix := externalURLPrefix(r)
+	prefix := a.basePath
 	rest := strings.TrimPrefix(r.URL.Path, "/proxy/")
 	parts := strings.SplitN(rest, "/", 3)
 	if len(parts) != 3 {
