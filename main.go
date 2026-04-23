@@ -16,9 +16,9 @@ import (
 )
 
 const (
-	defaultAddr        = ":8080"
+	defaultAddr        = ":28080"
 	resolveTimeout     = 60 * time.Second
-	defaultChromeDebug = "http://127.0.0.1:9222"
+	defaultChromeDebug = "http://127.0.0.1:9223"
 	defaultBasePath    = ""
 	ytdlpBinaryName    = "yt-dlp"
 	cookiesFileName    = "www.youtube.com_cookies.txt"
