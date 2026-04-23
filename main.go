@@ -194,8 +194,9 @@ func main() {
 	registerRoutes(mux, a)
 
 	addr := strings.TrimSpace(cfg.ServerAddr)
+	h := withBasePath(mux, cfg.BasePath)
 	log.Printf("[yt-bridge] start addr=%s yt-dlp=%s cookies=%s config=%s", addr, a.ytdlpPath, a.cookiesPath, a.configPath)
-	if err := http.ListenAndServe(addr, withCORS(loggingMiddleware(mux))); err != nil {
+	if err := http.ListenAndServe(addr, withCORS(loggingMiddleware(h))); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -541,6 +542,42 @@ func withPathPrefix(prefix, path string) string {
 		return v
 	}
 	return p + v
+}
+
+func withBasePath(next http.Handler, basePath string) http.Handler {
+	prefix := normalizePathPrefix(basePath)
+	if prefix == "" {
+		return next
+	}
+	want := prefix + "/"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path := ""
+		if r != nil && r.URL != nil {
+			path = r.URL.Path
+		}
+		if !strings.HasPrefix(path, want) {
+			http.NotFound(w, r)
+			return
+		}
+		nr := r.Clone(r.Context())
+		nr.URL = cloneURL(r.URL)
+		nr.URL.Path = strings.TrimPrefix(path, prefix)
+		if nr.URL.Path == "" {
+			nr.URL.Path = "/"
+		}
+		if raw := strings.TrimSpace(r.URL.RawPath); raw != "" {
+			nr.URL.RawPath = strings.TrimPrefix(raw, prefix)
+		}
+		next.ServeHTTP(w, nr)
+	})
+}
+
+func cloneURL(u *url.URL) *url.URL {
+	if u == nil {
+		return &url.URL{}
+	}
+	cp := *u
+	return &cp
 }
 
 func firstHeaderToken(raw string) string {
